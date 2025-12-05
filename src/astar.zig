@@ -40,7 +40,7 @@ pub fn astarModel(
     selfHead: Vector,
     food: *std.ArrayList(Vector),
     snakePieces: [11][11]bool,
-) ![:0]const u8 {
+) ![4]f32 {
     // sort food by closest
     std.mem.sort(Vector, food.items, selfHead, util.cmpDistance);
 
@@ -93,7 +93,8 @@ pub fn astarModel(
         }
     }
     const dir: Vectori = @as(Vectori, @intCast(node)) - @as(Vectori, @intCast(selfHead));
-    const move = util.dirToMove(dir);
+    var scores: [4]f32 = .{ 0.9, 0.9, 0.9, 0.9 };
+    scores[util.dirToIndex(dir)] = 1.0;
 
-    return move;
+    return scores;
 }

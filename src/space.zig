@@ -45,14 +45,13 @@ pub fn tryToSpread(res: *httpz.Response, visited: *std.AutoHashMap(Vector, NodeI
 }
 
 // get space's opinion on where to go next based on board state
-pub fn spaceModel(res: *httpz.Response, selfHead: Vector, selfLength: u8, food: *std.ArrayList(Vector), snakePieces: [11][11]bool, snakes: std.ArrayList(std.ArrayList(Vector))) ![:0]const u8 {
+pub fn spaceModel(res: *httpz.Response, selfHead: Vector, selfLength: u8, food: *std.ArrayList(Vector), snakePieces: [11][11]bool, snakes: std.ArrayList(std.ArrayList(Vector))) ![4]f32 {
     _ = food;
     _ = snakes;
 
     // for each direction that is valid,
     // let's bfs and count the number of accessible spaces
-    var highScore: f32 = 0;
-    var highDirIndex: usize = 0;
+    var scores: [4]f32 = .{ 0, 0, 0, 0 };
     for (util.dirs, 0..) |dir, dirIndex| {
         const posi: Vectori = @intCast(@as(Vectori, @intCast(selfHead)) + dir);
         // check if this direction is valid
@@ -75,12 +74,9 @@ pub fn spaceModel(res: *httpz.Response, selfHead: Vector, selfLength: u8, food: 
             const nextToSpread = visitQueue.orderedRemove(0);
             score += try tryToSpread(res, &visited, &visitQueue, snakePieces, selfLength, nextToSpread);
         }
-        // check if this move is a high score
-        if (score > highScore) {
-            highScore = score;
-            highDirIndex = dirIndex;
-        }
+        // set the score for this direction
+        scores[dirIndex] = score;
     }
 
-    return util.dirToMove(util.dirs[highDirIndex]);
+    return scores;
 }

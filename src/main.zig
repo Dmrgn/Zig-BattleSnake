@@ -80,12 +80,27 @@ fn postMove(req: *httpz.Request, res: *httpz.Response) !void {
             }
         }
 
-        // const astarOpinion = try astar.astarModel(res, selfHead, &food, snakeGrid);
+        const astarOpinion = try astar.astarModel(res, selfHead, &food, snakeGrid);
         const spaceOpinion = try space.spaceModel(res, selfHead, selfLength, &food, snakeGrid, snakes);
+
+        std.debug.print("l:{d:6.5} u:{d:6.5} r:{d:6.5} d:{d:6.5}\n", .{ spaceOpinion[0], spaceOpinion[1], spaceOpinion[2], spaceOpinion[3] });
+        // normalize scores
+        const astarScore: @Vector(4, f32) = astarOpinion;
+        var totalScore: @Vector(4, f32) = spaceOpinion;
+        totalScore *= astarScore;
+        var largest: f32 = 0;
+        var largestIndex: usize = 0;
+        for (0..4) |index| {
+            if (totalScore[index] > largest) {
+                largest = totalScore[index];
+                largestIndex = index;
+            }
+        }
+        totalScore /= .{ largest, largest, largest, largest };
 
         res.status = 200;
         try res.json(.{
-            .move = spaceOpinion,
+            .move = util.dirToMove(util.dirs[largestIndex]),
         }, .{});
     }
 }
