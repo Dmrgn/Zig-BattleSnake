@@ -24,3 +24,13 @@ pub fn cmpDistanceOrder(ctx: Vector, lhs: Vector, rhs: Vector) std.math.Order {
         false => std.math.Order.gt,
     };
 }
+// take a dir (Vector) and return a move ("up", "left", etc)
+pub fn dirToMove(dir: Vectori) ![:0]const u8 {
+    return switch (dir[0] + dir[1] * 2) {
+        dirs[0][0] + dirs[0][1] * 2 => "left",
+        dirs[1][0] + dirs[1][1] * 2 => "up",
+        dirs[2][0] + dirs[2][1] * 2 => "right",
+        dirs[3][0] + dirs[3][1] * 2 => "down",
+        else => "error",
+    };
+}

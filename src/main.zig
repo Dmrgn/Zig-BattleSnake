@@ -7,6 +7,7 @@ const Vector = util.Vector;
 const Vectori = util.Vectori;
 
 const astar = @import("astar.zig");
+const space = @import("space.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
@@ -48,6 +49,7 @@ fn postMove(req: *httpz.Request, res: *httpz.Response) !void {
         const snakesJson = boardJson.get("snakes").?.array;
         const selfJson = moveRequest.get("you").?.object;
         const selfHead = Vector{ @intCast(selfJson.get("head").?.object.get("x").?.integer), @intCast(selfJson.get("head").?.object.get("y").?.integer) };
+        const selfLength: u8 = @intCast(selfJson.get("length").?.integer);
         std.debug.print("New request =============== {} {}\n", .{ selfHead[0], selfHead[1] });
 
         // get food vectors
@@ -62,25 +64,28 @@ fn postMove(req: *httpz.Request, res: *httpz.Response) !void {
         // turn it into a 2d array for fast lookup
         var snakeGrid: [11][11]bool = .{.{false} ** 11} ** 11;
         // and into an arraylist representing each snake
-        // var snakes: std.ArrayList(std.ArrayList(Vector)) = .empty;
+        var snakes: std.ArrayList(std.ArrayList(Vector)) = .empty;
         for (snakesJson.items) |snakeValue| {
             const snake = snakeValue.object;
             const snakeBody = snake.get("body").?.array;
+            try snakes.append(res.arena, .empty);
             // const snake
             for (snakeBody.items) |snakePieceValue| {
                 const snakePiece = snakePieceValue.object;
                 const pieceX: u8 = @intCast(snakePiece.get("x").?.integer);
                 const pieceY: u8 = @intCast(snakePiece.get("y").?.integer);
+                try snakes.items[snakes.items.len - 1].append(res.arena, Vector{ pieceX, pieceY });
                 try snakePieces.append(res.arena, Vector{ pieceX, pieceY });
                 snakeGrid[pieceX][pieceY] = true;
             }
         }
 
-        const astarOpinion = try astar.astarModel(res, selfHead, &food, snakeGrid);
+        // const astarOpinion = try astar.astarModel(res, selfHead, &food, snakeGrid);
+        const spaceOpinion = try space.spaceModel(res, selfHead, selfLength, &food, snakeGrid, snakes);
 
         res.status = 200;
         try res.json(.{
-            .move = astarOpinion,
+            .move = spaceOpinion,
         }, .{});
     }
 }

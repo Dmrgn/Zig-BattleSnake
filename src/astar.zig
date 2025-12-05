@@ -93,13 +93,7 @@ pub fn astarModel(
         }
     }
     const dir: Vectori = @as(Vectori, @intCast(node)) - @as(Vectori, @intCast(selfHead));
-    const move = switch (dir[0] + dir[1] * 2) {
-        util.dirs[0][0] + util.dirs[0][1] * 2 => "left",
-        util.dirs[1][0] + util.dirs[1][1] * 2 => "up",
-        util.dirs[2][0] + util.dirs[2][1] * 2 => "right",
-        util.dirs[3][0] + util.dirs[3][1] * 2 => "down",
-        else => "error",
-    };
+    const move = util.dirToMove(dir);
 
     return move;
 }
