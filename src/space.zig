@@ -6,7 +6,6 @@ const Vector = util.Vector;
 const Vectori = util.Vectori;
 
 const NodeInfo = struct {
-    parent: ?Vector,
     distance: u8,
     score: f32,
     self: Vector,
@@ -34,7 +33,6 @@ pub fn tryToSpread(res: *httpz.Response, visited: *std.AutoHashMap(Vector, NodeI
         // visit it
         try visited.put(@intCast(pos), .{
             .distance = thisNodeInfo.?.distance + 1,
-            .parent = node,
             .self = @intCast(pos),
             .score = thisNodeInfo.?.score * 0.95, // TODO: consider lowering by tail length or not lowering
         });
@@ -44,14 +42,86 @@ pub fn tryToSpread(res: *httpz.Response, visited: *std.AutoHashMap(Vector, NodeI
     return thisNodeInfo.?.score;
 }
 
+// simulate one turn on the given diffusion grid.
+pub fn simulateDiffusionTurn(res: *httpz.Response, diffusion: *[11][11]f32, snakes: std.ArrayList(std.ArrayList(Vector)), queues: std.ArrayList(std.ArrayList(NodeInfo)), visited: std.ArrayList(std.AutoHashMap(Vector, NodeInfo)), turn: u8) !void {
+    // remove last tail piece
+    // diffuse heads
+    for (queues.items, 0..) |queue, index| {
+        // the more nodes (possibilities), the lower probability of each node
+        const diffusionStrength = 1.0 / @as(f32, @floatFromInt(queue.items.len));
+        // spread each node at this distance
+        while (queue.items.len > 0 and queue.items[0].distance == turn) {
+            const nextToSpread = queue.orderedRemove(0);
+            const nodei = @as(i8, @intCast(nextToSpread.self));
+            const toTry: [4]Vectori = .{
+                Vectori{ -1, 0 } + nodei,
+                Vectori{ 0, 1 } + nodei,
+                Vectori{ 1, 0 } + nodei,
+                Vectori{ 0, -1 } + nodei,
+            };
+            for (toTry) |posi| {
+                // check if this is a free square
+                if (posi[0] < 0 or posi[0] > 10 or posi[1] < 0 or posi[1] > 10 or diffusion[posi[0]][posi[1]] == 0 or visited.items[index].contains(@intCast(posi)))
+                    continue;
+                const pos = @as(u8, @intCast(posi));
+                // visit it
+                try visited.put(pos, .{
+                    .distance = nextToSpread.distance + 1,
+                    .self = pos,
+                    .score = diffusionStrength,
+                });
+                try queue.append(res.arena, pos);
+            }
+            // update this square in the diffusion grid
+            const nodeX: usize = @intCast(nextToSpread.self[0]);
+            const nodeY: usize = @intCast(nextToSpread.self[1]);
+            diffusion[nodeX][nodeY] *= 1 - diffusionStrength;
+        }
+    }
+}
+
 // get space's opinion on where to go next based on board state
 pub fn spaceModel(res: *httpz.Response, selfHead: Vector, selfLength: u8, food: *std.ArrayList(Vector), snakePieces: [11][11]bool, snakes: std.ArrayList(std.ArrayList(Vector))) ![4]f32 {
     _ = food;
     _ = snakes;
 
+    // let's make a diffusion grid that we can use to keep track of possible positions
+    // this should work better than treating snakes like fixed walls
+    // each [i][j] represents the probability of that space being available this turn
+    var snakePiecesDiffusion: [11][11]f32 = .{.{1.0} ** 11} ** 11;
+    // set snake occupied positions to 0 space available for the initial turn
+    for (0..11) |i| {
+        for (0..11) |j| {
+            snakePiecesDiffusion[i][j] = if (snakePieces[i][j]) 0 else 1;
+        }
+    }
+    // setup queues to diffuse using BFS on each snake's head (not our own)
+    var diffusionQueues: std.ArrayList(std.ArrayList(NodeInfo)) = .empty;
+    // setup the visited hashmaps for BFS on each snake's head (not our own)
+    var diffusionVisited: std.ArrayList(std.AutoHashMap(Vector, NodeInfo)) = .empty;
+    for (snakes.items, 0..) |snakeBody, index| {
+        const headInfo: NodeInfo = .{
+            .distance = 0,
+            .score = 0,
+            .self = snakeBody.items[0],
+        };
+        try diffusionVisited.append(res.arena, std.ArrayList(std.AutoHashMap(Vector, NodeInfo)).init(res.arena));
+        try diffusionVisited.items[index].put(snakeBody.items[0], headInfo);
+        try diffusionQueues.append(res.arena, .empty);
+        // we need to omit diffusing our own head
+        if (std.meta.eql(snakeBody.items[0], selfHead))
+            continue;
+        // add the head as the first item in each queue
+        try diffusionQueues.items[index].append(res.arena, headInfo);
+    }
+
+    // simulate the first turn of diffusion
+    try simulateDiffusionTurn(res, &snakePiecesDiffusion, snakes, &diffusionQueues, &diffusionVisited, 0);
+
     // for each direction that is valid,
     // let's bfs and count the number of accessible spaces
     var scores: [4]f32 = .{ 0, 0, 0, 0 };
+    var turn: u8 = 1;
     for (util.dirs, 0..) |dir, dirIndex| {
         const posi: Vectori = @intCast(@as(Vectori, @intCast(selfHead)) + dir);
         // check if this direction is valid
@@ -64,7 +134,6 @@ pub fn spaceModel(res: *httpz.Response, selfHead: Vector, selfLength: u8, food: 
         var visited = std.AutoHashMap(Vector, NodeInfo).init(res.arena);
         try visited.put(pos, .{
             .distance = 1,
-            .parent = null,
             .score = 1,
             .self = pos,
         });
