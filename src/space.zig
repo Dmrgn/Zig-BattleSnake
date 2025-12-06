@@ -11,7 +11,7 @@ const NodeInfo = struct {
     self: Vector,
 };
 
-pub fn tryToSpread(res: *httpz.Response, visited: *std.AutoHashMap(Vector, NodeInfo), visitQueue: *std.ArrayList(Vector), snakePieces: [11][11]bool, selfLength: u8, node: Vector) !f32 {
+pub fn tryToSpread(res: *httpz.Response, visited: *std.AutoHashMap(Vector, NodeInfo), visitQueue: *std.ArrayList(Vector), snakePieces: [11][11]bool, selfLength: u8, diffusion: [11][11]f32, node: Vector) !f32 {
     _ = selfLength;
     const nodei: Vectori = @intCast(node);
     const thisNodeInfo = visited.get(node);
@@ -28,13 +28,17 @@ pub fn tryToSpread(res: *httpz.Response, visited: *std.AutoHashMap(Vector, NodeI
     };
     for (toTry) |pos| {
         // check if this is a free square
-        if (pos[0] < 0 or pos[0] > 10 or pos[1] < 0 or pos[1] > 10 or snakePieces[@intCast(pos[0])][@intCast(pos[1])] or visited.contains(@intCast(pos)))
+        if (pos[0] < 0 or pos[0] > 10 or pos[1] < 0 or pos[1] > 10 or snakePieces[@intCast(pos[0])][@intCast(pos[1])])
             continue;
+        if (visited.contains(@intCast(pos))) {
+            // TODO: look into how we can handle already visited nodes
+            continue;
+        }
         // visit it
         try visited.put(@intCast(pos), .{
             .distance = thisNodeInfo.?.distance + 1,
             .self = @intCast(pos),
-            .score = thisNodeInfo.?.score * 0.95, // TODO: consider lowering by tail length or not lowering
+            .score = thisNodeInfo.?.score * diffusion[@intCast(pos[0])][@intCast(pos[1])],
         });
         try visitQueue.append(res.arena, @intCast(pos));
     }
@@ -45,6 +49,14 @@ pub fn tryToSpread(res: *httpz.Response, visited: *std.AutoHashMap(Vector, NodeI
 // simulate one turn on the given diffusion grid.
 pub fn simulateDiffusionTurn(res: *httpz.Response, diffusion: *[11][11]f32, snakes: std.ArrayList(std.ArrayList(Vector)), queues: std.ArrayList(std.ArrayList(NodeInfo)), visited: std.ArrayList(std.AutoHashMap(Vector, NodeInfo)), turn: u8) !void {
     // remove last tail piece
+    if (turn > 0) {
+        for (snakes.items) |snake| {
+            if (snake.items.len < turn)
+                continue;
+            const lastPiece = snake.items[snake.items.len - turn];
+            diffusion[@intCast(lastPiece[0])][@intCast(lastPiece[1])] = 1.0;
+        }
+    }
     // diffuse heads
     for (queues.items, 0..) |queue, index| {
         // the more nodes (possibilities), the lower probability of each node
@@ -83,7 +95,6 @@ pub fn simulateDiffusionTurn(res: *httpz.Response, diffusion: *[11][11]f32, snak
 // get space's opinion on where to go next based on board state
 pub fn spaceModel(res: *httpz.Response, selfHead: Vector, selfLength: u8, food: *std.ArrayList(Vector), snakePieces: [11][11]bool, snakes: std.ArrayList(std.ArrayList(Vector))) ![4]f32 {
     _ = food;
-    _ = snakes;
 
     // let's make a diffusion grid that we can use to keep track of possible positions
     // this should work better than treating snakes like fixed walls
