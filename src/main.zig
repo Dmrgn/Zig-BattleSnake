@@ -36,9 +36,9 @@ fn getIndex(_: *httpz.Request, res: *httpz.Response) !void {
     try res.json(.{
         .apiversion = "1",
         .author = "dmrgn",
-        .color = "#ff0000",
-        .head = "default",
-        .tail = "default",
+        .color = "#8928d4",
+        .head = "evil",
+        .tail = "flame",
     }, .{});
 }
 
