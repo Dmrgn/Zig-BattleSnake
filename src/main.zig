@@ -13,15 +13,21 @@ pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
 
+    var port: u16 = 5882;
+    if (std.os.argv.len == 3 and std.mem.eql(u8, std.mem.span(std.os.argv[1]), "--port")) {
+        port = try std.fmt.parseInt(u16, std.mem.span(std.os.argv[2]), 10);
+    }
+
     // More advance cases will use a custom "Handler" instead of "void".
     // The last parameter is our handler instance, since we have a "void"
     // handler, we passed a void ({}) value.
-    var server = try httpz.Server(void).init(allocator, .{ .port = 5882, .address = "0.0.0.0" }, {});
+    var server = try httpz.Server(void).init(allocator, .{ .port = port, .address = "0.0.0.0" }, {});
     defer {
         // clean shutdown, finishes serving any live request
         server.stop();
         server.deinit();
     }
+    std.debug.print("Running on port {}\n", .{port});
 
     var router = try server.router(.{});
     router.get("/", getIndex, .{});

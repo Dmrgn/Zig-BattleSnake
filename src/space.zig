@@ -11,15 +11,23 @@ const NodeInfo = struct {
     self: Vector,
 };
 
-pub fn tryToSpread(res: *httpz.Response, visited: *std.AutoHashMap(Vector, NodeInfo), visitQueue: *std.ArrayList(NodeInfo), snakePieces: [11][11]bool, selfLength: u8, diffusion: [11][11]f32, node: Vector) !f32 {
+pub fn tryToSpread(res: *httpz.Response, visited: *std.AutoHashMap(Vector, NodeInfo), visitQueue: *std.ArrayList(NodeInfo), snakePieces: [11][11]bool, selfLength: u8, diffusion: [11][11]f32, modifierGrid: [11][11]f32, node: Vector) !f32 {
     _ = selfLength;
     _ = snakePieces;
     const nodei: Vectori = @intCast(node);
-    const thisNodeInfo = visited.get(node);
+    var thisNodeInfo = visited.get(node);
     // if we don't contribute anything, then just return
     // since none of our children will contribute either
     if (thisNodeInfo.?.score <= 0.05)
         return 0;
+    var modifierStrength: f32 = 1;
+    if (modifierGrid[@intCast(node[0])][@intCast(node[1])] < 1) {
+        modifierStrength = 1 - (1 / @as(f32, @floatFromInt(thisNodeInfo.?.distance)));
+    } else if (modifierGrid[@intCast(node[0])][@intCast(node[1])] > 1) {
+        modifierStrength = 1 + (1 / @as(f32, @floatFromInt(thisNodeInfo.?.distance)));
+    }
+    try visited.put(node, NodeInfo{ .distance = thisNodeInfo.?.distance, .score = thisNodeInfo.?.score * modifierStrength, .self = thisNodeInfo.?.self });
+    thisNodeInfo = visited.get(node);
     // otherwise let's add our children to the queue
     const toTry: [4]Vectori = .{
         Vectori{ -1, 0 } + nodei,
@@ -35,7 +43,7 @@ pub fn tryToSpread(res: *httpz.Response, visited: *std.AutoHashMap(Vector, NodeI
             // TODO: look into how we can handle already visited nodes
             continue;
         }
-        std.debug.print("\t\ttry to spread: {} {} : {} {}\n", .{ pos[0], pos[1], @as(u8, @intCast(pos[0])), @as(u8, @intCast(pos[1])) });
+        // std.debug.print("\t\ttry to spread: {} {} : {} {}\n", .{ pos[0], pos[1], @as(u8, @intCast(pos[0])), @as(u8, @intCast(pos[1])) });
         // visit it
         const nodeInfo: NodeInfo = .{
             .distance = thisNodeInfo.?.distance + 1,
@@ -50,7 +58,7 @@ pub fn tryToSpread(res: *httpz.Response, visited: *std.AutoHashMap(Vector, NodeI
 }
 
 // simulate one turn on the given diffusion grid.
-pub fn simulateDiffusionTurn(res: *httpz.Response, diffusion: *[11][11]f32, snakes: std.ArrayList(std.ArrayList(Vector)), queues: *std.ArrayList(std.ArrayList(NodeInfo)), visited: *std.ArrayList(std.AutoHashMap(Vector, NodeInfo)), turn: u8) !void {
+pub fn simulateDiffusionTurn(res: *httpz.Response, diffusion: *[11][11]f32, modifierGrid: *[11][11]f32, snakes: std.ArrayList(std.ArrayList(Vector)), queues: *std.ArrayList(std.ArrayList(NodeInfo)), visited: *std.ArrayList(std.AutoHashMap(Vector, NodeInfo)), selfLength: u8, turn: u8) !void {
     // remove last tail piece
     if (turn > 0) {
         for (snakes.items) |snake| {
@@ -74,6 +82,8 @@ pub fn simulateDiffusionTurn(res: *httpz.Response, diffusion: *[11][11]f32, snak
                 Vectori{ 1, 0 } + nodei,
                 Vectori{ 0, -1 } + nodei,
             };
+            // update the modifier grid to show this head
+            modifierGrid[@intCast(nodei[0])][@intCast(nodei[1])] = if (snakes.items[index].items.len >= selfLength) 0 else 2;
             for (toTry) |posi| {
                 // check if this is a free square
                 if (posi[0] < 0 or posi[0] > 10 or posi[1] < 0 or posi[1] > 10 or diffusion[@intCast(posi[0])][@intCast(posi[1])] == 0 or visited.items[index].contains(@intCast(posi)))
@@ -91,6 +101,8 @@ pub fn simulateDiffusionTurn(res: *httpz.Response, diffusion: *[11][11]f32, snak
             // update this square in the diffusion grid
             const nodeX: usize = @intCast(nextToSpread.self[0]);
             const nodeY: usize = @intCast(nextToSpread.self[1]);
+            // only diffuse larger snakes (we want to move towards the heads of smaller snakes)
+            if (snakes.items[index].items.len < selfLength) continue;
             diffusion[nodeX][nodeY] *= 1 - diffusionStrength;
         }
     }
@@ -104,6 +116,12 @@ pub fn spaceModel(res: *httpz.Response, selfHead: Vector, selfLength: u8, food: 
     // let's bfs and count the probability area of accessible spaces in the diffusion
     var scores: [4]f32 = .{ 0, 0, 0, 0 };
     for (util.dirs, 0..) |dir, dirIndex| {
+        const posi: Vectori = @intCast(@as(Vectori, @intCast(selfHead)) + dir);
+        // check if this direction is valid
+        if (posi[0] < 0 or posi[0] > 10 or posi[1] < 0 or posi[1] > 10)
+            continue;
+        const pos: Vector = @intCast(posi);
+
         var turn: u8 = 1;
         // let's make a diffusion grid that we can use to keep track of possible positions
         // this should work better than treating snakes like fixed walls
@@ -115,6 +133,16 @@ pub fn spaceModel(res: *httpz.Response, selfHead: Vector, selfLength: u8, food: 
                 snakePiecesDiffusion[i][j] = if (snakePieces[i][j]) 0 else 1;
             }
         }
+        // for (0..11) |y| {
+        //     for (0..11) |x| {
+        //         std.debug.print("{d:6.2}", .{snakePiecesDiffusion[x][10 - y]});
+        //     }
+        //     std.debug.print("\n", .{});
+        // }
+        // we have a modifier grid which denotes
+        // cells containing shorter and longer snake heads
+        // create modifier grid
+        var modifierGrid: [11][11]f32 = .{.{1.0} ** 11} ** 11;
         // setup queues to diffuse using BFS on each snake's head (not our own)
         var diffusionQueues: std.ArrayList(std.ArrayList(NodeInfo)) = .empty;
         // setup the visited hashmaps for BFS on each snake's head (not our own)
@@ -135,28 +163,16 @@ pub fn spaceModel(res: *httpz.Response, selfHead: Vector, selfLength: u8, food: 
             try diffusionQueues.items[index].append(res.arena, headInfo);
         }
         // simulate the first turn of diffusion
-        try simulateDiffusionTurn(res, &snakePiecesDiffusion, snakes, &diffusionQueues, &diffusionVisited, 0);
-        try simulateDiffusionTurn(res, &snakePiecesDiffusion, snakes, &diffusionQueues, &diffusionVisited, 1);
+        try simulateDiffusionTurn(res, &snakePiecesDiffusion, &modifierGrid, snakes, &diffusionQueues, &diffusionVisited, selfLength, 0);
+        try simulateDiffusionTurn(res, &snakePiecesDiffusion, &modifierGrid, snakes, &diffusionQueues, &diffusionVisited, selfLength, 1);
 
-        for (0..11) |y| {
-            for (0..11) |x| {
-                std.debug.print("{d:6.2}", .{snakePiecesDiffusion[x][10 - y]});
-            }
-            std.debug.print("\n", .{});
-        }
-
-        const posi: Vectori = @intCast(@as(Vectori, @intCast(selfHead)) + dir);
-        // check if this direction is valid
-        if (posi[0] < 0 or posi[0] > 10 or posi[1] < 0 or posi[1] > 10 or snakePieces[@intCast(posi[0])][@intCast(posi[1])])
-            continue;
-        const pos: Vector = @intCast(posi);
         // score this space with bfs
         const nodeInfo: NodeInfo = .{
             .distance = 1,
             .score = snakePiecesDiffusion[@intCast(pos[0])][@intCast(pos[1])],
             .self = pos,
         };
-        std.debug.print("spread position: {} {}\n", .{ pos[0], pos[1] });
+        // std.debug.print("spread position: {} {}\n", .{ pos[0], pos[1] });
         var visitQueue: std.ArrayList(NodeInfo) = .empty;
         try visitQueue.append(res.arena, nodeInfo);
         var visited = std.AutoHashMap(Vector, NodeInfo).init(res.arena);
@@ -164,26 +180,42 @@ pub fn spaceModel(res: *httpz.Response, selfHead: Vector, selfLength: u8, food: 
         // empty the visit queue and sum connected node's scores
         var score: f32 = 0;
         while (visitQueue.items.len > 0) {
+            // reset modifier grid
+            modifierGrid = .{.{1.0} ** 11} ** 11;
+
             // diffuse to simulate the next turn
-            try simulateDiffusionTurn(res, &snakePiecesDiffusion, snakes, &diffusionQueues, &diffusionVisited, turn);
-            std.debug.print("\tturn: {} queue length: {}\n", .{ turn, visitQueue.items.len });
-            for (visitQueue.items) |queueItem| {
-                std.debug.print("\t\tqueue: {} {}\n", .{ queueItem.self[0], queueItem.self[1] });
-            }
+            try simulateDiffusionTurn(res, &snakePiecesDiffusion, &modifierGrid, snakes, &diffusionQueues, &diffusionVisited, selfLength, turn);
+            // std.debug.print("\tturn: {} queue length: {}\n", .{ turn, visitQueue.items.len });
+            // for (visitQueue.items) |queueItem| {
+            //     std.debug.print("\t\tqueue: {} {}\n", .{ queueItem.self[0], queueItem.self[1] });
+            // }
             while (visitQueue.items.len > 0 and visitQueue.items[0].distance == turn) {
                 const nextToSpread = visitQueue.orderedRemove(0);
-                score += try tryToSpread(res, &visited, &visitQueue, snakePieces, selfLength, snakePiecesDiffusion, nextToSpread.self);
+                score += try tryToSpread(res, &visited, &visitQueue, snakePieces, selfLength, snakePiecesDiffusion, modifierGrid, nextToSpread.self);
             }
-            std.debug.print("\tscore: {d:6.3}\n", .{score});
+
+            // std.debug.print("TURN: {}\n", .{turn});
+            // for (0..11) |y| {
+            //     for (0..11) |x| {
+            //         if (visited.contains(Vector{ @intCast(x), @intCast(10 - y) })) {
+            //             const visitedNode = visited.get(Vector{ @intCast(x), @intCast(10 - y) });
+            //             std.debug.print("|{d:6.2} {d:6.2}", .{ visitedNode.?.score, modifierGrid[x][10 - y] });
+            //         } else {
+            //             std.debug.print("|  NV   {d:6.2}", .{modifierGrid[x][10 - y]});
+            //         }
+            //     }
+            //     std.debug.print("\n", .{});
+            // }
+            // std.debug.print("\tscore: {d:6.3}\n", .{score});
             turn += 1;
-            if (turn <= 3) {
-                for (0..11) |y| {
-                    for (0..11) |x| {
-                        std.debug.print("{d:6.2}", .{snakePiecesDiffusion[x][10 - y]});
-                    }
-                    std.debug.print("\n", .{});
-                }
-            }
+            // if (turn <= 10) {
+            //     for (0..11) |y| {
+            //         for (0..11) |x| {
+            //             std.debug.print("{d:6.2}", .{snakePiecesDiffusion[x][10 - y]});
+            //         }
+            //         std.debug.print("\n", .{});
+            //     }
+            // }
         }
         // set the score for this direction
         scores[dirIndex] = score;

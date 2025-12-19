@@ -93,7 +93,7 @@ pub fn astarModel(
         }
     }
     const dir: Vectori = @as(Vectori, @intCast(node)) - @as(Vectori, @intCast(selfHead));
-    var scores: [4]f32 = .{ 0.9, 0.9, 0.9, 0.9 };
+    var scores: [4]f32 = .{ 0.8, 0.8, 0.8, 0.8 };
     scores[util.dirToIndex(dir)] = 1.0;
 
     return scores;
